@@ -40,7 +40,7 @@ URLS_TO_WATCH: List[Dict[str, str]] = [
 
 # 各 URL の最新ステータスを保存し、「空室なし→空室あり」に変わったときだけ通知します。
 # 次回も通知を受け取りたい場合はファイルを削除するか、該当 URL の記録を消してください。
-STATE_FILE = Path("data/last_status.json")
+STATE_FILE_FULL_PATH = Path("/Users/kunio/Project/yufuin-club-watcher/data/last_status.json")
 # ntfy.sh に投稿するトピック。必要に応じて URL を差し替えてください。
 NTFY_TOPIC_URL = "https://ntfy.sh/yufuin_club"
 # curl の例に合わせて通知タイトルを固定で "Orbital" にします。好みで書き換えてください。
@@ -48,8 +48,8 @@ NTFY_TITLE = "Orbital"
 # 必要であればタグを増やしてください。ntfy のクライアントによっては絵文字に変換されます。
 NTFY_TAGS = ["hotel", "watcher"]
 
-# ログファイルのパス
-LOG_FILE = Path("data/log.txt")
+# ログファイルのフルパス
+LOG_FILE_FULL_PATH = Path("/Users/kunio/Project/yufuin-club-watcher/data/log.txt")
 
 # パソコンのブラウザー相当の User-Agent を設定し、通常の HTML を返してもらいます。
 DEFAULT_HEADERS = {
