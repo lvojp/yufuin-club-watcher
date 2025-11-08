@@ -1,12 +1,13 @@
 ## yufuin-club-watcher
 
-由布院倶楽部の予約ページを定期的にチェックし、空室が見つかったタイミングで [ntfy.sh](https://ntfy.sh/) へ投稿するシンプルなスクリプトです。監視したい URL を Python のリストに並べるだけで複数日を同時に追跡できます。
+由布院倶楽部の予約ページを定期的にチェックし、空室が見つかったタイミングで [Pushover](https://pushover.net/) 通知を送るシンプルなスクリプトです。監視したい URL を Python のリストに並べるだけで複数日を同時に追跡できます。
 
 ### 必要環境
 
-- Python 3.9 以上
+- Python 3.11 以上
 - [uv](https://github.com/astral-sh/uv)
-- ntfy.sh へ HTTPS POST できること（追加の認証は不要）
+- `api.pushover.net` へ HTTPS POST できること
+- 依存パッケージ（`httpx`, `python-dotenv` など）は `uv sync` 実行時にまとめて導入されます
 
 ### セットアップ
 
@@ -25,6 +26,21 @@ yufuin-club-watcher
 uv run --locked python -m yufuin_club_watcher
 ```
 
+### Pushover の準備
+
+1. Pushover でアカウントを作成し、ユーザーキー（User Key）を控えます。
+2. 「Create an Application/API Token」からアプリケーショントークンを作成します。
+3. プロジェクト直下の `.env` に次のように入力します（このリポジトリにはプレースホルダーが入った `.env` を同梱しています）。`python-dotenv` が自動で読み込むため、追加の設定は不要です。
+
+   ```env
+   PUSHOVER_APPLICATION_TOKEN=your_application_token
+   PUSHOVER_USER_KEY=your_user_key
+   ```
+
+4. 送信元タイトルは `由布院クラブの更新`、優先度は通常通知 (0) に固定されています。必要なら `src/yufuin_club_watcher/__main__.py` の定数を調整してください。
+
+curl でテストする場合は Pushover 公式ドキュメントの例を参考に、同じ `token` と `user` を用いて POST できます。
+
 ### 監視対象の設定
 
 `src/yufuin_club_watcher/__main__.py` 内の `URLS_TO_WATCH` リストに監視したいプランを追加します。同じ辞書をコピーし、`label`（通知に表示したい名前）と `url` を入れ替えるだけです。
@@ -39,19 +55,7 @@ URLS_TO_WATCH = [
 ]
 ```
 
-スクリプトは `data/last_status.json` に直近の状態を記録し、前回「空室なし」だったプランが「空室あり」になったときにだけ通知します。
-
-### ntfy.sh の設定
-
-- 既定では `https://ntfy.sh/yufuin_club` に投稿し、タイトルは `Orbital`、タグは `hotel,watcher` です。
-- パスワード付きトピックを使いたい場合は `NTFY_TOPIC_URL` やヘッダーの設定をコード内で変更してください。
-- iOS で通知を受け取る場合は ntfy の PWA か他サービス（IFTTT, Pushover など）を併用してください。
-
-curl から動作を確認したいときは次のように送れます。
-
-   ```bash
-   curl -H "Title: Orbital" -d "バックテスト完了" https://ntfy.sh/yufuin_club
-   ```
+スクリプトは `data/last_status.json` に直近の状態を記録し、前回「空室なし」だったプランが「空室あり」になったときにだけ通知します。ログは `data/log.txt` に追記されます。
 
 ### 定期実行（cron 例）
 
@@ -62,14 +66,9 @@ curl から動作を確認したいときは次のように送れます。
 ```
 
 - 5 分ごとに巡回する設定例です。必要に応じて間隔を調整してください。
-- cron の前に手動実行し、LINE 通知が届くか確認するのがおすすめです。
-
-### 他の通知手段について
-
-- **IFTTT Webhooks**: `requests.post("https://maker.ifttt.com/trigger/...")` のように差し替えれば、メールや iOS の通知にも転送できます。
-- **LINE Notify**: `send_ntfy_notification()` を書き換えれば LINE にも戻せます。ヘッダーを `Authorization: Bearer ...` に変えるだけでOKです。
+- cron の前に手動実行し、Pushover 通知が届くか確認するのがおすすめです。
 
 ### トラブルシューティング
 
 - サイトの文言が変わり、空室があるのに検知できない場合は `UNAVAILABLE_TEXT` の文字列を更新してください。
-- 一時的な通信エラーは標準エラー出力に表示され、状態は更新されません。数分待って再実行してください。
+- 一時的な通信エラーや Pushover の認証エラーは標準エラー出力に表示されます。`.env` の設定と通信環境を確認してください。

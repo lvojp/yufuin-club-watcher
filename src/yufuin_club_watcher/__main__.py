@@ -1,14 +1,16 @@
-"""複数の予約プランを巡回し、空室を検知したら ntfy.sh に通知するシンプルなウォッチャーです。"""
+"""複数の予約プランを巡回し、空室を検知したら Pushover 通知を送るシンプルなウォッチャーです。"""
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import httpx
+from dotenv import load_dotenv
 
 # 予約ページで空室がない場合に表示される文言。HTML 内からこの文字列を探して判定します。
 UNAVAILABLE_TEXT = (
@@ -38,18 +40,23 @@ URLS_TO_WATCH: List[Dict[str, str]] = [
     },
 ]
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_ROOT / "data"
 # 各 URL の最新ステータスを保存し、「空室なし→空室あり」に変わったときだけ通知します。
 # 次回も通知を受け取りたい場合はファイルを削除するか、該当 URL の記録を消してください。
-STATE_FILE_FULL_PATH = Path("/Users/kunio/Project/yufuin-club-watcher/data/last_status.json")
-# ntfy.sh に投稿するトピック。必要に応じて URL を差し替えてください。
-NTFY_TOPIC_URL = "https://ntfy.sh/yufuin_club"
-# curl の例に合わせて通知タイトルを固定で "Orbital" にします。好みで書き換えてください。
-NTFY_TITLE = "Orbital"
-# 必要であればタグを増やしてください。ntfy のクライアントによっては絵文字に変換されます。
-NTFY_TAGS = ["hotel", "watcher"]
+STATE_FILE = DATA_DIR / "last_status.json"
+# 実行状況を残すログファイル
+LOG_FILE = DATA_DIR / "log.txt"
+# 認証情報を読み込む .env ファイル
+ENV_FILE = PROJECT_ROOT / ".env"
 
-# ログファイルのフルパス
-LOG_FILE_FULL_PATH = Path("/Users/kunio/Project/yufuin-club-watcher/data/log.txt")
+PUSHOVER_API_URL = "https://api.pushover.net/1/messages.json"
+PUSHOVER_APPLICATION_TOKEN_ENV = "PUSHOVER_APPLICATION_TOKEN"
+PUSHOVER_USER_KEY_ENV = "PUSHOVER_USER_KEY"
+# Pushover の通知タイトル
+PUSHOVER_TITLE = "由布院クラブの更新"
+# 既定の優先度 (通常通知)
+PUSHOVER_PRIORITY = 0
 
 # パソコンのブラウザー相当の User-Agent を設定し、通常の HTML を返してもらいます。
 DEFAULT_HEADERS = {
@@ -59,6 +66,8 @@ DEFAULT_HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml",
 }
+
+load_dotenv(dotenv_path=ENV_FILE)
 
 
 def load_previous_state() -> Dict[str, bool]:
@@ -80,12 +89,11 @@ def save_state(state: Dict[str, bool]) -> None:
 
 def log_activity(label: str, status: str, notify_sent: bool = False) -> None:
     """実行内容をログファイルに記録します。"""
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"{timestamp} - Label: {label}, Status: {status}, Notification: {'sent' if notify_sent else 'not sent'}\n"
-    LOG_FILE.write_text(log_entry, encoding='utf-8') if not LOG_FILE.exists() else LOG_FILE.open('a',
-                                                                                                 encoding='utf-8').write(
-        log_entry)
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_FILE.open("a", encoding="utf-8") as fp:
+        fp.write(log_entry)
 
 
 def check_single_url(label: str, url: str, timeout: float = 30.0) -> Dict[str, object]:
@@ -117,30 +125,36 @@ def check_single_url(label: str, url: str, timeout: float = 30.0) -> Dict[str, o
     return result
 
 
-def build_ntfy_message(result: Dict[str, object]) -> str:
-    """空室が見つかったときに ntfy.sh へ投稿する本文を作成します。"""
-    return (
-        "由布院倶楽部の空室を検知しました\n"
-        f"{result['label']}\n"
-        f"{result['url']}"
-    )
+def build_notification_message(result: Dict[str, object]) -> str:
+    """空室が見つかったときに Pushover へ投稿する本文を作成します。"""
+    return f"{result['label']}\n{result['url']}"
 
 
-def send_ntfy_notification(message: str) -> Tuple[bool, str]:
-    """ntfy.sh へ通知を送り、成否と詳細を返します。"""
-    headers = {
-        "Title": NTFY_TITLE,
-        "Tags": ",".join(NTFY_TAGS),
+def send_pushover_notification(message: str) -> Tuple[bool, str]:
+    """Pushover へ通知を送り、成否と詳細を返します。"""
+    token = os.getenv(PUSHOVER_APPLICATION_TOKEN_ENV, "").strip()
+    user_key = os.getenv(PUSHOVER_USER_KEY_ENV, "").strip()
+    if not token or not user_key:
+        return (
+            False,
+            "Pushover の認証情報 (PUSHOVER_APPLICATION_TOKEN, PUSHOVER_USER_KEY) が設定されていません",
+        )
+
+    payload = {
+        "token": token,
+        "user": user_key,
+        "title": PUSHOVER_TITLE,
+        "message": message,
+        "priority": PUSHOVER_PRIORITY,
     }
-
     try:
         with httpx.Client(timeout=10.0) as client:
-            response = client.post(NTFY_TOPIC_URL, data=message.encode("utf-8"), headers=headers)
+            response = client.post(PUSHOVER_API_URL, data=payload)
             response.raise_for_status()
     except httpx.HTTPError as exc:
-        return False, f"ntfy への通知に失敗しました: {exc}"
+        return False, f"Pushover への通知に失敗しました: {exc}"
 
-    return True, "ntfy への通知を送信しました"
+    return True, "Pushover への通知を送信しました"
 
 
 def main() -> int:
@@ -172,12 +186,12 @@ def main() -> int:
         just_opened = result["available"] and not was_available
 
         if just_opened:
-            message = build_ntfy_message(result)
-            success, detail = send_ntfy_notification(message)
+            message = build_notification_message(result)
+            success, detail = send_pushover_notification(message)
             print(f"  notification: {detail}")
             if not success:
                 # cron のメールに分かりやすく表示させるためヒントを出します。
-                print("  tip: ntfy のトピック URL や通信環境を確認してください", file=sys.stderr)
+                print("  tip: .env の認証情報や通信環境を確認してください", file=sys.stderr)
 
         log_activity(label, status, just_opened)
 
